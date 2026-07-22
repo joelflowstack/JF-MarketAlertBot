@@ -7,6 +7,7 @@
  *
  * Routes:
  *   GET    /api/health                      liveness check
+ *   POST   /api/telegram/webhook             Telegram webhook (production bot transport)
  *   GET    /api/price/:symbol               current quote for a symbol
  *   GET    /api/watchlist/:userId           a user's watched symbols
  *   POST   /api/watchlist                   add a symbol { userId, symbol, threshold? }
@@ -27,9 +28,30 @@ import {
 import { checkAllAlerts } from '../services/alertEngine.js';
 import { toApiSymbol, formatPrice, formatChangePercent, formatTimeUTC } from '../utils/formatters.js';
 import { logger } from '../utils/logger.js';
+import { bot, sendTelegramMessage } from '../telegram/bot.js';
 
 const app = express();
 app.use(cors());
+
+// Safety net: without this, an unhandled promise rejection (e.g. a transient
+// network error inside Telegraf) crashes the entire Node process on modern
+// Node versions, taking the whole API down with it. Log and keep running.
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled promise rejection', { reason: reason?.message || String(reason) });
+});
+
+// ---------------------------------------------------------------------------
+// Telegram webhook
+// Registered BEFORE express.json() - Telegraf needs to read the raw request
+// stream itself, so the global JSON body-parser below must not consume it
+// first for this path.
+// ---------------------------------------------------------------------------
+app.use(
+  bot.webhookCallback('/api/telegram/webhook', {
+    secretToken: process.env.TELEGRAM_WEBHOOK_SECRET,
+  })
+);
+
 app.use(express.json());
 
 /** Wraps async route handlers so rejected promises reach Express's error handler. */
@@ -120,14 +142,7 @@ app.post(
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // TODO (Phase 3): replace this stub with the real Telegraf send function,
-    // e.g. `import { sendTelegramMessage } from '../telegram/bot.js'`.
-    // The alert engine doesn't care what notify() does internally.
-    const notify = async (userId, message) => {
-      logger.info('ALERT (notifier stub - Telegram wiring lands in Phase 3)', { userId, message });
-    };
-
-    const result = await checkAllAlerts(notify);
+    const result = await checkAllAlerts(sendTelegramMessage);
     res.json(result);
   })
 );
