@@ -8,6 +8,7 @@
  */
 import { getAllWatchlists, updateLastPrice } from './watchlist.js';
 import { getQuotes } from './marketData.js';
+import { recordAlert } from './alertHistory.js';
 import { formatPrice, formatChangePercent, formatTimeUTC, toDisplaySymbol } from '../utils/formatters.js';
 import { logger } from '../utils/logger.js';
 
@@ -47,6 +48,12 @@ export async function checkAllAlerts(notify) {
         if (crossed) {
           try {
             await notify(userId, formatAlertMessage(item.symbol, quote, item.threshold));
+            await recordAlert(userId, {
+              symbol: item.symbol,
+              threshold: item.threshold,
+              price: quote.price,
+              changePercent: quote.changePercent,
+            });
             alertsSent += 1;
           } catch (err) {
             logger.error('Failed to send alert notification', { userId, symbol: item.symbol, error: err.message });
