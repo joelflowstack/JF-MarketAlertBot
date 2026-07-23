@@ -1,16 +1,24 @@
 /**
  * telegram/commands.js
  *
- * One handler per command. Kept thin - all real logic lives in services/,
- * these just parse Telegram input, call the service, and format a reply.
+ * One handler per command, plus inline-keyboard buttons for the common
+ * actions (view watchlist, remove an item, help) so people don't have to
+ * remember/type every command by hand. All real logic still lives in
+ * services/ - these just parse input, call the service, and format a reply.
  *
  * We use ctx.chat.id (not ctx.from.id) as the watchlist key, so it works
  * the same way whether the user talks to the bot in a DM or in a group/channel.
  */
+import { Markup } from 'telegraf';
 import { addToWatchlist, removeFromWatchlist, listWatchlist } from '../services/watchlist.js';
 import { getQuote } from '../services/marketData.js';
 import { toApiSymbol, toDisplaySymbol, formatPrice, formatChangePercent, formatTimeUTC } from '../utils/formatters.js';
 import { logger } from '../utils/logger.js';
+
+const MAIN_MENU = Markup.inlineKeyboard([
+  [Markup.button.callback('👀 My Watchlist', 'menu:list'), Markup.button.callback('📊 Check a Price', 'menu:price')],
+  [Markup.button.callback('❓ Help', 'menu:help')],
+]);
 
 export function registerCommands(bot) {
   bot.start(handleStart);
@@ -20,6 +28,12 @@ export function registerCommands(bot) {
   bot.command('remove', handleRemove);
   bot.command('price', handlePrice);
   bot.command('id', handleId);
+
+  // Inline keyboard button handlers
+  bot.action('menu:list', handleListCallback);
+  bot.action('menu:help', handleHelpCallback);
+  bot.action('menu:price', handlePriceCallback);
+  bot.action(/^remove:(.+)$/, handleRemoveCallback);
 }
 
 async function handleId(ctx) {
@@ -33,26 +47,34 @@ async function handleStart(ctx) {
       '',
       "I'll watch forex, gold, and crypto prices for you and ping you the moment your price levels hit.",
       '',
-      'Try /watch EURUSD 1.1800 to get started, or /help to see everything I can do.',
-    ].join('\n')
+      'Try /watch EURUSD 1.1800 to get started, or use the buttons below.',
+    ].join('\n'),
+    MAIN_MENU
   );
 }
 
 async function handleHelp(ctx) {
-  await ctx.reply(
-    [
-      '📖 Commands',
-      '',
-      '/watch SYMBOL [threshold] — add an asset to your watchlist, optionally with an alert price',
-      '   e.g. /watch EURUSD 1.1800   or   /watch BTCUSD',
-      '/list — show everything you\'re watching',
-      '/remove SYMBOL — stop watching an asset',
-      '/price SYMBOL — get the current price, daily high/low, and 24h change',
-      '/id — get your Chat ID (for logging into the web dashboard)',
-      '',
-      'Supported symbols: EURUSD, XAUUSD (gold), BTCUSD, and more forex/crypto pairs — plus stock indices like SPX, DJI, IXIC, NDX, RUT.',
-    ].join('\n')
-  );
+  await ctx.reply(helpText(), MAIN_MENU);
+}
+
+async function handleHelpCallback(ctx) {
+  await ctx.answerCbQuery();
+  await ctx.reply(helpText(), MAIN_MENU);
+}
+
+function helpText() {
+  return [
+    '📖 Commands',
+    '',
+    '/watch SYMBOL [threshold] — add an asset to your watchlist, optionally with an alert price',
+    '   e.g. /watch EURUSD 1.1800   or   /watch BTCUSD',
+    "/list — show everything you're watching",
+    '/remove SYMBOL — stop watching an asset',
+    '/price SYMBOL — get the current price, daily high/low, and 24h change',
+    '/id — get your Chat ID (for logging into the web dashboard)',
+    '',
+    'Supported symbols: EURUSD, XAUUSD (gold), BTCUSD, and more forex/crypto pairs — plus stock indices like SPX, DJI, IXIC, NDX, RUT.',
+  ].join('\n');
 }
 
 async function handleWatch(ctx) {
@@ -85,10 +107,12 @@ async function handleWatch(ctx) {
   await ctx.reply(`✅ Now watching ${toDisplaySymbol(apiSymbol)}. ${thresholdNote}`);
 }
 
-async function handleList(ctx) {
-  const items = await listWatchlist(String(ctx.chat.id));
+/** Builds the watchlist message text + a remove button per item. Shared by /list and the menu button. */
+async function buildWatchlistView(userId) {
+  const items = await listWatchlist(userId);
+
   if (items.length === 0) {
-    return ctx.reply("You're not watching anything yet. Try /watch EURUSD 1.1800 to get started.");
+    return { text: "You're not watching anything yet. Try /watch EURUSD 1.1800 to get started.", keyboard: null };
   }
 
   const lines = items.map((item) => {
@@ -97,7 +121,41 @@ async function handleList(ctx) {
     return `• ${symbol} — ${thresholdText}`;
   });
 
-  await ctx.reply(['👀 Your watchlist:', '', ...lines].join('\n'));
+  const removeButtons = items.map((item) => [
+    Markup.button.callback(`🗑 Remove ${toDisplaySymbol(item.symbol)}`, `remove:${item.symbol}`),
+  ]);
+
+  return {
+    text: ['👀 Your watchlist:', '', ...lines].join('\n'),
+    keyboard: Markup.inlineKeyboard(removeButtons),
+  };
+}
+
+async function handleList(ctx) {
+  const { text, keyboard } = await buildWatchlistView(String(ctx.chat.id));
+  await ctx.reply(text, keyboard ?? undefined);
+}
+
+async function handleListCallback(ctx) {
+  await ctx.answerCbQuery();
+  const { text, keyboard } = await buildWatchlistView(String(ctx.chat.id));
+  await ctx.reply(text, keyboard ?? undefined);
+}
+
+async function handleRemoveCallback(ctx) {
+  const apiSymbol = ctx.match[1];
+  const removed = await removeFromWatchlist(String(ctx.chat.id), apiSymbol);
+  await ctx.answerCbQuery(removed ? `Removed ${toDisplaySymbol(apiSymbol)}` : 'Already removed');
+
+  // Refresh the message in place so the button list updates live instead of
+  // leaving a stale button around for an item that no longer exists.
+  const { text, keyboard } = await buildWatchlistView(String(ctx.chat.id));
+  await ctx.editMessageText(text, keyboard ?? undefined).catch(() => {});
+}
+
+async function handlePriceCallback(ctx) {
+  await ctx.answerCbQuery();
+  await ctx.reply('Which symbol? Send it like this: /price EURUSD');
 }
 
 async function handleRemove(ctx) {
