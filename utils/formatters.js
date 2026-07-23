@@ -5,14 +5,25 @@
  */
 
 /**
- * Users type symbols without a slash (EURUSD, XAUUSD, BTCUSD).
- * Twelve Data expects "EUR/USD", "XAU/USD", "BTC/USD".
- * This assumes a 3-letter/3-letter pair, which covers every symbol in the MVP spec.
- * If we add non-6-character symbols (e.g. stock indices like SPX) later, this
- * function is the only place that needs to change.
+ * Users type symbols without a slash (EURUSD, XAUUSD, BTCUSD) for forex/metal/
+ * crypto pairs, or a bare ticker (SPX, DJI) for stock indices.
+ * Twelve Data expects "EUR/USD" for pairs, but indices are passed as-is.
+ *
+ * Known index tickers are an explicit allowlist rather than "anything that
+ * isn't 6 letters" - that keeps obvious typos (e.g. "EURUS") from silently
+ * being sent to the API as if they were a valid index and returning a
+ * confusing error instead of our own clear "unrecognized symbol" message.
+ * Add more here as needed - this is the only place symbol support changes.
  */
+const KNOWN_INDICES = new Set(['SPX', 'DJI', 'IXIC', 'NDX', 'RUT']);
+
 export function toApiSymbol(userInput) {
   const clean = userInput.trim().toUpperCase().replace(/[^A-Z]/g, '');
+
+  if (KNOWN_INDICES.has(clean)) {
+    return clean;
+  }
+
   if (clean.length !== 6) {
     return null; // signals "unrecognized symbol format" to the caller
   }
