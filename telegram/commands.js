@@ -192,16 +192,24 @@ async function handlePrice(ctx) {
 
   try {
     const quote = await getQuote(apiSymbol);
-    await ctx.reply(
-      [
-        `📊 ${toDisplaySymbol(apiSymbol)}`,
-        `Price: ${formatPrice(quote.price, apiSymbol)}`,
-        `High: ${formatPrice(quote.high, apiSymbol)}`,
-        `Low: ${formatPrice(quote.low, apiSymbol)}`,
-        `24h Change: ${formatChangePercent(quote.changePercent)}`,
-        `Time: ${formatTimeUTC(quote.timestamp)}`,
-      ].join('\n')
-    );
+    const lines = [
+      `📊 ${toDisplaySymbol(apiSymbol)}`,
+      `Price: ${formatPrice(quote.price, apiSymbol)}`,
+      `High: ${formatPrice(quote.high, apiSymbol)}`,
+      `Low: ${formatPrice(quote.low, apiSymbol)}`,
+      `24h Change: ${formatChangePercent(quote.changePercent)}`,
+      `Time: ${formatTimeUTC(quote.timestamp)}`,
+    ];
+
+    // NGN pairs: our data source reports the official/interbank (NFEM) rate,
+    // which typically trades at a few percent below the parallel/street rate
+    // most people actually transact at. Say so, rather than implying this is
+    // the number you'll get from a street dealer.
+    if (apiSymbol.includes('NGN')) {
+      lines.push('', 'ℹ️ Official interbank rate. Parallel market typically trades a few % higher.');
+    }
+
+    await ctx.reply(lines.join('\n'));
   } catch (err) {
     logger.error('Failed to fetch price for /price command', { symbol: apiSymbol, error: err.message });
     await ctx.reply(`Sorry, I couldn't fetch a price for ${toDisplaySymbol(apiSymbol)} right now. Please try again shortly.`);
