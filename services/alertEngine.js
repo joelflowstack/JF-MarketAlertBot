@@ -81,8 +81,7 @@ function didCrossThreshold(lastPrice, currentPrice, threshold) {
 }
 
 function formatAlertMessage(apiSymbol, quote, threshold) {
-  const display = toDisplaySymbol(apiSymbol);
-  return [
+  const lines = [
     `🚨 Alert`,
     `${apiSymbol} crossed ${threshold}`,
     ``,
@@ -94,5 +93,11 @@ function formatAlertMessage(apiSymbol, quote, threshold) {
     ``,
     `Time:`,
     formatTimeUTC(quote.timestamp),
-  ].join('\n');
+  ];
+
+  if (apiSymbol.includes('NGN')) {
+    lines.push('', 'ℹ️ Official interbank rate. Parallel market typically trades a few % higher.');
+  }
+
+  return lines.join('\n');
 }
