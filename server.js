@@ -14,6 +14,8 @@
  *   GET    /api/watchlist/:userId           a user's watched symbols
  *   POST   /api/watchlist                   add a symbol { userId, symbol, threshold? }
  *   DELETE /api/watchlist/:userId/:symbol   remove a symbol
+ *   GET    /api/alerts/:userId              recent alert history for a user
+ *   GET    /api/admin/stats                 aggregate stats for the admin panel
  *   POST   /api/cron/check-alerts           triggers one alert-check pass (secret-protected)
  */
 import 'dotenv/config';
@@ -25,14 +27,18 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   listWatchlist,
+  getAllWatchlists,
 } from './services/watchlist.js';
 import { checkAllAlerts } from './services/alertEngine.js';
+import { getRecentAlerts, getTotalAlertsSent } from './services/alertHistory.js';
 import { toApiSymbol, formatPrice, formatChangePercent, formatTimeUTC } from './utils/formatters.js';
 import { logger } from './utils/logger.js';
 import { bot, sendTelegramMessage } from './telegram/bot.js';
 
 const app = express();
 app.use(cors());
+
+const SERVER_STARTED_AT = new Date().toISOString();
 
 // Safety net: without this, an unhandled promise rejection (e.g. a transient
 // network error inside Telegraf) crashes the entire Node process on modern
@@ -127,6 +133,38 @@ app.delete(
       return res.status(404).json({ error: 'Symbol not found in watchlist' });
     }
     res.json({ removed: apiSymbol });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Alert history (dashboard "Recent Alerts")
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/alerts/:userId',
+  asyncHandler(async (req, res) => {
+    const alerts = await getRecentAlerts(req.params.userId);
+    res.json({ userId: req.params.userId, alerts });
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Admin stats
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/admin/stats',
+  asyncHandler(async (req, res) => {
+    const watchlists = await getAllWatchlists();
+    const totalUsers = watchlists.length;
+    const uniqueAssets = new Set(watchlists.flatMap(({ items }) => items.map((i) => i.symbol)));
+    const alertsSent = await getTotalAlertsSent();
+
+    res.json({
+      totalUsers,
+      assetsMonitored: uniqueAssets.size,
+      alertsSent,
+      botOnline: true,
+      serverStartedAt: SERVER_STARTED_AT,
+    });
   })
 );
 
