@@ -50,7 +50,7 @@ async function handleHelp(ctx) {
       '/price SYMBOL — get the current price, daily high/low, and 24h change',
       '/id — get your Chat ID (for logging into the web dashboard)',
       '',
-      'Supported symbols (MVP): EURUSD, XAUUSD (gold), BTCUSD — more coming soon.',
+      'Supported symbols: EURUSD, XAUUSD (gold), BTCUSD, and more forex/crypto pairs — plus stock indices like SPX, DJI, IXIC, NDX, RUT.',
     ].join('\n')
   );
 }
@@ -65,7 +65,7 @@ async function handleWatch(ctx) {
 
   const apiSymbol = toApiSymbol(rawSymbol);
   if (!apiSymbol) {
-    return ctx.reply(`I don't recognize "${rawSymbol}". Try something like EURUSD, XAUUSD, or BTCUSD.`);
+    return ctx.reply(`I don't recognize "${rawSymbol}". Try a pair like EURUSD/XAUUSD/BTCUSD, or an index like SPX/DJI.`);
   }
 
   let threshold = null;
