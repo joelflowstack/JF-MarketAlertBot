@@ -19,6 +19,11 @@ export function registerCommands(bot) {
   bot.command('list', handleList);
   bot.command('remove', handleRemove);
   bot.command('price', handlePrice);
+  bot.command('id', handleId);
+}
+
+async function handleId(ctx) {
+  await ctx.reply(`Your Chat ID is: ${ctx.chat.id}\n\nUse this to log into the web dashboard.`);
 }
 
 async function handleStart(ctx) {
@@ -43,6 +48,7 @@ async function handleHelp(ctx) {
       '/list — show everything you\'re watching',
       '/remove SYMBOL — stop watching an asset',
       '/price SYMBOL — get the current price, daily high/low, and 24h change',
+      '/id — get your Chat ID (for logging into the web dashboard)',
       '',
       'Supported symbols (MVP): EURUSD, XAUUSD (gold), BTCUSD — more coming soon.',
     ].join('\n')
