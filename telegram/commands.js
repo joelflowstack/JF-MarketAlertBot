@@ -16,9 +16,35 @@ import { toApiSymbol, toDisplaySymbol, formatPrice, formatChangePercent, formatT
 import { logger } from '../utils/logger.js';
 
 const MAIN_MENU = Markup.inlineKeyboard([
-  [Markup.button.callback('👀 My Watchlist', 'menu:list'), Markup.button.callback('📊 Check a Price', 'menu:price')],
-  [Markup.button.callback('❓ Help', 'menu:help')],
+  [Markup.button.callback('👀 My Watchlist', 'menu:list'), Markup.button.callback('💱 Quick Add', 'menu:quickadd')],
+  [Markup.button.callback('📊 Check a Price', 'menu:price'), Markup.button.callback('❓ Help', 'menu:help')],
 ]);
+
+// Common symbols for the Nigerian market this bot is built around: USD, GBP,
+// EUR, and CAD against naira cover the currencies most freelancers/diaspora
+// senders actually deal in, plus gold and BTC as widely-watched global assets.
+// Add more here as you learn what people actually ask for - this list and
+// the /watch command both go through the same toApiSymbol() validation, so
+// there's no risk of a button offering a symbol the backend can't handle.
+const POPULAR_PAIRS = [
+  { label: '🇺🇸 USD/NGN', symbol: 'USDNGN' },
+  { label: '🇬🇧 GBP/NGN', symbol: 'GBPNGN' },
+  { label: '🇪🇺 EUR/NGN', symbol: 'EURNGN' },
+  { label: '🇨🇦 CAD/NGN', symbol: 'CADNGN' },
+  { label: '🥇 Gold', symbol: 'XAUUSD' },
+  { label: '₿ Bitcoin', symbol: 'BTCUSD' },
+];
+
+function quickAddMenu() {
+  const rows = [];
+  for (let i = 0; i < POPULAR_PAIRS.length; i += 2) {
+    rows.push(
+      POPULAR_PAIRS.slice(i, i + 2).map((p) => Markup.button.callback(p.label, `watch:${p.symbol}`))
+    );
+  }
+  rows.push([Markup.button.callback('⬅️ Back', 'menu:back')]);
+  return Markup.inlineKeyboard(rows);
+}
 
 export function registerCommands(bot) {
   bot.start(handleStart);
@@ -33,7 +59,33 @@ export function registerCommands(bot) {
   bot.action('menu:list', handleListCallback);
   bot.action('menu:help', handleHelpCallback);
   bot.action('menu:price', handlePriceCallback);
+  bot.action('menu:quickadd', handleQuickAddMenu);
+  bot.action('menu:back', handleBackToMenu);
   bot.action(/^remove:(.+)$/, handleRemoveCallback);
+  bot.action(/^watch:(.+)$/, handleQuickWatch);
+}
+
+async function handleQuickAddMenu(ctx) {
+  await ctx.answerCbQuery();
+  await ctx.editMessageText('Tap an asset to add it to your watchlist:', quickAddMenu()).catch(() =>
+    ctx.reply('Tap an asset to add it to your watchlist:', quickAddMenu())
+  );
+}
+
+async function handleBackToMenu(ctx) {
+  await ctx.answerCbQuery();
+  await ctx.editMessageText('What would you like to do?', MAIN_MENU).catch(() =>
+    ctx.reply('What would you like to do?', MAIN_MENU)
+  );
+}
+
+async function handleQuickWatch(ctx) {
+  const apiSymbol = ctx.match[1];
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, null);
+  await ctx.answerCbQuery(`Added ${toDisplaySymbol(apiSymbol)}`);
+  await ctx.reply(
+    `✅ Now watching ${toDisplaySymbol(apiSymbol)}. Want an alert? Send:\n/watch ${toDisplaySymbol(apiSymbol)} <price>`
+  );
 }
 
 async function handleId(ctx) {
