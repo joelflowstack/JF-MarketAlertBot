@@ -46,6 +46,31 @@ function quickAddMenu() {
   return Markup.inlineKeyboard(rows);
 }
 
+/**
+ * Suggests a "logical" alert threshold: the next round number in whatever
+ * direction the price is currently trending, sized to the asset's own scale
+ * (e.g. nearest 50 for a ~1400 NGN pair, nearest 0.01 for a ~1.1 forex pair).
+ * This is a simple heuristic, not a prediction - it just picks a sensible
+ * round milestone near the current price rather than an arbitrary decimal.
+ */
+function suggestThreshold(price, changePercent) {
+  const direction = changePercent >= 0 ? 1 : -1;
+
+  let step;
+  if (price >= 10000) step = 500;
+  else if (price >= 1000) step = 50;
+  else if (price >= 100) step = 5;
+  else if (price >= 10) step = 0.5;
+  else if (price >= 1) step = 0.01;
+  else step = 0.001;
+
+  let suggested = direction > 0 ? Math.ceil(price / step) * step : Math.floor(price / step) * step;
+  if (suggested === price) suggested += direction * step; // ensure it's actually a different, meaningful level
+
+  const decimals = step >= 1 ? 0 : String(step).split('.')[1].length;
+  return parseFloat(suggested.toFixed(decimals));
+}
+
 export function registerCommands(bot) {
   bot.start(handleStart);
   bot.help(handleHelp);
@@ -63,6 +88,7 @@ export function registerCommands(bot) {
   bot.action('menu:back', handleBackToMenu);
   bot.action(/^remove:(.+)$/, handleRemoveCallback);
   bot.action(/^watch:(.+)$/, handleQuickWatch);
+  bot.action(/^setalert:(.+):([\d.]+)$/, handleSetAlertFromSuggestion);
 }
 
 async function handleQuickAddMenu(ctx) {
@@ -83,9 +109,41 @@ async function handleQuickWatch(ctx) {
   const apiSymbol = ctx.match[1];
   await addToWatchlist(String(ctx.chat.id), apiSymbol, null);
   await ctx.answerCbQuery(`Added ${toDisplaySymbol(apiSymbol)}`);
-  await ctx.reply(
-    `✅ Now watching ${toDisplaySymbol(apiSymbol)}. Want an alert? Send:\n/watch ${toDisplaySymbol(apiSymbol)} <price>`
-  );
+
+  const display = toDisplaySymbol(apiSymbol);
+
+  try {
+    const quote = await getQuote(apiSymbol);
+    const suggested = suggestThreshold(quote.price, quote.changePercent);
+    const suggestedDisplay = formatPrice(suggested, apiSymbol);
+
+    await ctx.reply(
+      [
+        `✅ Now watching ${display}`,
+        `Current price: ${formatPrice(quote.price, apiSymbol)}`,
+        '',
+        `💡 Suggested alert: ${suggestedDisplay}`,
+        '',
+        "Not the number you want? Copy this and swap in your own price:",
+        `/watch ${display} ${suggestedDisplay}`,
+      ].join('\n'),
+      Markup.inlineKeyboard([
+        [Markup.button.callback(`✅ Use ${suggestedDisplay}`, `setalert:${apiSymbol}:${suggested}`)],
+      ])
+    );
+  } catch (err) {
+    // Added successfully either way - just couldn't fetch a live price to base a suggestion on.
+    logger.error('Failed to suggest a threshold after quick-add', { symbol: apiSymbol, error: err.message });
+    await ctx.reply(`✅ Now watching ${display}. Want an alert? Send:\n/watch ${display} <price>`);
+  }
+}
+
+async function handleSetAlertFromSuggestion(ctx) {
+  const apiSymbol = ctx.match[1];
+  const threshold = parseFloat(ctx.match[2]);
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, threshold);
+  await ctx.answerCbQuery(`Alert set at ${threshold}`);
+  await ctx.reply(`🔔 Alert set: I'll notify you when ${toDisplaySymbol(apiSymbol)} crosses ${threshold}.`);
 }
 
 async function handleId(ctx) {
@@ -144,7 +202,7 @@ async function handleWatch(ctx) {
 
   let threshold = null;
   if (rawThreshold !== undefined) {
-    threshold = parseFloat(rawThreshold);
+    threshold = parseFloat(rawThreshold.replace(/,/g, ''));
     if (Number.isNaN(threshold)) {
       return ctx.reply(`"${rawThreshold}" doesn't look like a valid price. Example: /watch EURUSD 1.1800`);
     }
