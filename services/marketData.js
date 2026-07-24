@@ -4,10 +4,17 @@
  * Thin adapter around Twelve Data's REST API. This is the ONLY file that
  * knows about Twelve Data's request/response shape — if we ever add a
  * fallback provider (e.g. exchangerate.host, Finnhub) or switch providers,
- * only this file changes. Everything else in the app just calls getQuote().
+ * only this file changes. Everything else in the app just calls getQuote()
+ * or getQuotes().
  *
- * Twelve Data free tier: 800 requests/day, 8 requests/minute.
- * Docs: https://twelvedata.com/docs#quote
+ * Twelve Data free tier: 800 credits/day, 8 requests/minute. Each symbol
+ * checked costs 1 credit, REGARDLESS of whether it's batched into one HTTP
+ * request or fetched individually - batching only helps against the
+ * 8-requests-PER-MINUTE cap, not the 800-credits-PER-DAY cap. With N symbols
+ * watched continuously, checking every X minutes costs N * (1440/X) credits
+ * a day - for that to stay under 800, X must be at least ~1.8*N minutes.
+ * See server.js / the cron setup notes for how this shapes the check interval.
+ * Docs: https://twelvedata.com/docs#quote, https://support.twelvedata.com/en/articles/5203360-batch-api-requests
  */
 import axios from 'axios';
 import { toApiSymbol } from '../utils/formatters.js';
@@ -15,16 +22,32 @@ import { logger } from '../utils/logger.js';
 
 const BASE_URL = 'https://api.twelvedata.com';
 
-// Simple in-memory cache to avoid burning API credits when multiple users
-// watch the same symbol or the dashboard polls frequently. 20s TTL is a
-// reasonable tradeoff for a "near real-time" demo without tripping rate limits.
-const CACHE_TTL_MS = 20_000;
+// Shared cache across getQuote() AND getQuotes() - every caller (the bot's
+// /price command, the dashboard, and the alert-check cron) reads and writes
+// the same cache, so within one TTL window a symbol is only ever actually
+// fetched from Twelve Data once, no matter how many different things asked
+// for it. TTL is set to slightly longer than the cron's check interval so
+// that in steady state, ONLY the cron originates fresh credit-consuming
+// calls - dashboard/bot reads in between are free cache hits.
+const CACHE_TTL_MS = 90_000;
 const quoteCache = new Map(); // apiSymbol -> { data, expiresAt }
 
+function normalizeQuoteEntry(entry, apiSymbol) {
+  return {
+    symbol: apiSymbol,
+    price: parseFloat(entry.close ?? entry.price),
+    high: parseFloat(entry.high),
+    low: parseFloat(entry.low),
+    changePercent: parseFloat(entry.percent_change),
+    timestamp: entry.timestamp ?? Math.floor(Date.now() / 1000),
+  };
+}
+
 /**
- * Fetches a normalized quote for a symbol.
+ * Fetches a normalized quote for a single symbol. Internally just delegates
+ * to getQuotes() so single lookups and batch lookups always share the exact
+ * same caching/fetching logic - one code path, not two to keep in sync.
  * @param {string} rawSymbol - user-facing symbol, e.g. "EURUSD" or "EUR/USD"
- * @returns {Promise<{symbol: string, price: number, high: number, low: number, changePercent: number, timestamp: number}>}
  */
 export async function getQuote(rawSymbol) {
   const apiSymbol = rawSymbol.includes('/') ? rawSymbol.toUpperCase() : toApiSymbol(rawSymbol);
@@ -32,62 +55,84 @@ export async function getQuote(rawSymbol) {
     throw new Error(`Unrecognized symbol format: "${rawSymbol}"`);
   }
 
-  const cached = quoteCache.get(apiSymbol);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.data;
+  const results = await getQuotes([apiSymbol]);
+  const quote = results[apiSymbol];
+  if (!quote) {
+    throw new Error(`Could not fetch a quote for "${apiSymbol}"`);
   }
-
-  const apiKey = process.env.TWELVE_DATA_API_KEY;
-  if (!apiKey) {
-    throw new Error('TWELVE_DATA_API_KEY is not set');
-  }
-
-  try {
-    const response = await axios.get(`${BASE_URL}/quote`, {
-      params: { symbol: apiSymbol, apikey: apiKey },
-      timeout: 8000,
-    });
-
-    const raw = response.data;
-
-    // Twelve Data returns { code, message } (no "status" field) on errors
-    if (raw.code && raw.code !== 200) {
-      throw new Error(raw.message || 'Twelve Data returned an error');
-    }
-
-    const data = {
-      symbol: apiSymbol,
-      price: parseFloat(raw.close ?? raw.price),
-      high: parseFloat(raw.high),
-      low: parseFloat(raw.low),
-      changePercent: parseFloat(raw.percent_change),
-      timestamp: raw.timestamp ?? Math.floor(Date.now() / 1000),
-    };
-
-    quoteCache.set(apiSymbol, { data, expiresAt: Date.now() + CACHE_TTL_MS });
-    return data;
-  } catch (err) {
-    logger.error('Failed to fetch quote from Twelve Data', {
-      symbol: apiSymbol,
-      error: err.message,
-    });
-    throw err;
-  }
+  return quote;
 }
 
 /**
- * Fetches quotes for multiple symbols, tolerating individual failures so one
- * bad/rate-limited symbol doesn't take down a whole watchlist check.
+ * Fetches quotes for multiple symbols in a SINGLE batched HTTP request
+ * (Twelve Data supports comma-separated symbols on /quote), rather than one
+ * request per symbol. This is what keeps us under the 8-requests-per-minute
+ * cap even when watching many symbols - see the module docblock for why it
+ * does NOT, by itself, reduce total daily credit usage.
  * @param {string[]} symbols
  * @returns {Promise<Record<string, object|null>>} map of symbol -> quote (or null on failure)
  */
 export async function getQuotes(symbols) {
   const uniqueSymbols = [...new Set(symbols)];
-  const results = await Promise.allSettled(uniqueSymbols.map((s) => getQuote(s)));
+  if (uniqueSymbols.length === 0) return {};
 
-  return uniqueSymbols.reduce((acc, symbol, i) => {
-    const result = results[i];
-    acc[symbol] = result.status === 'fulfilled' ? result.value : null;
-    return acc;
-  }, {});
+  const now = Date.now();
+  const results = {};
+  const toFetch = [];
+
+  for (const symbol of uniqueSymbols) {
+    const cached = quoteCache.get(symbol);
+    if (cached && cached.expiresAt > now) {
+      results[symbol] = cached.data;
+    } else {
+      toFetch.push(symbol);
+    }
+  }
+
+  if (toFetch.length === 0) return results;
+
+  const apiKey = process.env.TWELVE_DATA_API_KEY;
+  if (!apiKey) {
+    logger.error('TWELVE_DATA_API_KEY is not set');
+    toFetch.forEach((s) => { results[s] = null; });
+    return results;
+  }
+
+  try {
+    const response = await axios.get(`${BASE_URL}/quote`, {
+      params: { symbol: toFetch.join(','), apikey: apiKey },
+      timeout: 10000,
+    });
+
+    const raw = response.data;
+
+    // Twelve Data returns a flat object for a single symbol, but an object
+    // keyed by symbol when multiple symbols are requested in one call.
+    const isMultiSymbolShape = toFetch.length > 1 || raw[toFetch[0]] !== undefined;
+
+    for (const symbol of toFetch) {
+      const entry = isMultiSymbolShape ? raw[symbol] : raw;
+
+      if (!entry || (entry.code && entry.code !== 200)) {
+        logger.warn('No usable quote in Twelve Data response', {
+          symbol,
+          message: entry?.message,
+        });
+        results[symbol] = null;
+        continue;
+      }
+
+      const data = normalizeQuoteEntry(entry, symbol);
+      quoteCache.set(symbol, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      results[symbol] = data;
+    }
+  } catch (err) {
+    logger.error('Failed to fetch batched quotes from Twelve Data', {
+      symbols: toFetch,
+      error: err.message,
+    });
+    toFetch.forEach((s) => { results[s] = null; });
+  }
+
+  return results;
 }
