@@ -16,14 +16,13 @@ export function Prices() {
     if (isRefresh) setRefreshing(true);
     try {
       const wl = await api.getWatchlist(session.chatId);
-      const results = await Promise.all(
-        wl.items.map((item) =>
-          api
-            .getPrice(item.symbol.replace('/', ''))
-            .then((p) => ({ ...p, threshold: item.threshold }))
-            .catch(() => ({ symbol: item.symbol, error: true }))
-        )
-      );
+      const symbols = wl.items.map((item) => item.symbol.replace('/', ''));
+      const { prices: priceMap } = symbols.length ? await api.getPrices(symbols) : { prices: {} };
+
+      const results = wl.items.map((item) => {
+        const quote = priceMap[item.symbol];
+        return quote ? { ...quote, threshold: item.threshold } : { symbol: item.symbol, error: true };
+      });
       setPrices(results);
     } catch {
       toast.error('Could not load prices.');
@@ -35,7 +34,9 @@ export function Prices() {
 
   useEffect(() => {
     load();
-    const interval = setInterval(() => load(true), 20_000);
+    // 45s poll - a bit longer than the backend's 90s shared quote cache half-life,
+    // so refreshes reliably land on freshly-cached data instead of forcing extra fetches.
+    const interval = setInterval(() => load(true), 45_000);
     return () => clearInterval(interval);
   }, [load]);
 
