@@ -31,8 +31,8 @@ const POPULAR_PAIRS = [
   { label: '🇬🇧 GBP/NGN', symbol: 'GBPNGN' },
   { label: '🇪🇺 EUR/NGN', symbol: 'EURNGN' },
   { label: '🇨🇦 CAD/NGN', symbol: 'CADNGN' },
-  { label: '🥇 Gold', symbol: 'XAUUSD' },
-  { label: '₿ Bitcoin', symbol: 'BTCUSD' },
+  { label: '🥇 XAU/USD (Gold)', symbol: 'XAUUSD' },
+  { label: '₿ BTC/USD (Bitcoin)', symbol: 'BTCUSD' },
 ];
 
 function quickAddMenu() {
