@@ -11,6 +11,7 @@
  *   GET    /api/health                      liveness check
  *   POST   /api/telegram/webhook             Telegram webhook (production bot transport)
  *   GET    /api/price/:symbol               current quote for a symbol
+ *   GET    /api/prices?symbols=A,B,C         batched quotes for multiple symbols (used by the dashboard)
  *   GET    /api/watchlist/:userId           a user's watched symbols
  *   POST   /api/watchlist                   add a symbol { userId, symbol, threshold? }
  *   DELETE /api/watchlist/:userId/:symbol   remove a symbol
@@ -22,7 +23,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 
-import { getQuote } from './services/marketData.js';
+import { getQuote, getQuotes } from './services/marketData.js';
 import {
   addToWatchlist,
   removeFromWatchlist,
@@ -91,6 +92,37 @@ app.get(
       changePercent: formatChangePercent(quote.changePercent),
       timestamp: formatTimeUTC(quote.timestamp),
     });
+  })
+);
+
+// Batched version of the above - the dashboard uses this instead of calling
+// /api/price/:symbol once per watched item, so N watched symbols means ONE
+// request to us (and, in turn, one batched request to Twelve Data instead
+// of N - see services/marketData.js for why that matters).
+app.get(
+  '/api/prices',
+  asyncHandler(async (req, res) => {
+    const raw = (req.query.symbols || '').split(',').filter(Boolean);
+    const apiSymbols = raw.map(toApiSymbol).filter(Boolean);
+    if (apiSymbols.length === 0) {
+      return res.json({ prices: {} });
+    }
+
+    const quotes = await getQuotes(apiSymbols);
+    const prices = {};
+    for (const [symbol, quote] of Object.entries(quotes)) {
+      prices[symbol] = quote
+        ? {
+            symbol,
+            price: formatPrice(quote.price, symbol),
+            high: formatPrice(quote.high, symbol),
+            low: formatPrice(quote.low, symbol),
+            changePercent: formatChangePercent(quote.changePercent),
+            timestamp: formatTimeUTC(quote.timestamp),
+          }
+        : null;
+    }
+    res.json({ prices });
   })
 );
 
