@@ -32,15 +32,10 @@ export function Overview() {
         setAlerts(recentAlerts.alerts);
         setBotOnline(!!health);
 
-        const prices = await Promise.all(
-          wl.items.map((item) =>
-            api
-              .getPrice(item.symbol.replace('/', ''))
-              .then((p) => ({ symbol: p.symbol, price: p.price, changePercent: p.changePercent }))
-              .catch(() => null)
-          )
-        );
-        if (!cancelled) setTickerData(prices.filter(Boolean));
+        const symbols = wl.items.map((item) => item.symbol.replace('/', ''));
+        const { prices: priceMap } = symbols.length ? await api.getPrices(symbols) : { prices: {} };
+        const prices = Object.values(priceMap).filter(Boolean);
+        if (!cancelled) setTickerData(prices);
       } catch {
         if (!cancelled) setBotOnline(false);
       } finally {
@@ -49,7 +44,8 @@ export function Overview() {
     }
 
     load();
-    const interval = setInterval(load, 30_000);
+    // 45s poll - matches Prices.jsx, aligned with the backend's shared quote cache window.
+    const interval = setInterval(load, 45_000);
     return () => {
       cancelled = true;
       clearInterval(interval);
