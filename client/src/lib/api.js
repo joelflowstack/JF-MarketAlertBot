@@ -28,6 +28,10 @@ async function request(path, options = {}) {
 export const api = {
   health: () => request('/api/health'),
   getPrice: (symbol) => request(`/api/price/${symbol}`),
+  // Batched - always prefer this over calling getPrice() in a loop, so N
+  // watched symbols means one request instead of N (see server.js/marketData.js
+  // for why that matters on Twelve Data's free tier).
+  getPrices: (symbols) => request(`/api/prices?symbols=${symbols.join(',')}`),
   getWatchlist: (userId) => request(`/api/watchlist/${userId}`),
   addToWatchlist: (userId, symbol, threshold) =>
     request('/api/watchlist', {
