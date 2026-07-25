@@ -39,7 +39,13 @@ function normalizeQuoteEntry(entry, apiSymbol) {
     high: parseFloat(entry.high),
     low: parseFloat(entry.low),
     changePercent: parseFloat(entry.percent_change),
-    timestamp: entry.timestamp ?? Math.floor(Date.now() / 1000),
+    // NOT entry.timestamp: Twelve Data's own timestamp field appears to
+    // reflect something other than "right now" (observed repeatedly
+    // returning midnight UTC regardless of actual fetch time). Since what
+    // the user actually wants to know is "when was this price fetched,"
+    // our own capture time is both simpler and correct - accurate to
+    // within the cache window (see CACHE_TTL_MS above).
+    timestamp: Math.floor(Date.now() / 1000),
   };
 }
 
