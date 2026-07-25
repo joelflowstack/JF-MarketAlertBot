@@ -17,7 +17,8 @@ import { logger } from '../utils/logger.js';
 
 const MAIN_MENU = Markup.inlineKeyboard([
   [Markup.button.callback('👀 My Watchlist', 'menu:list'), Markup.button.callback('💱 Quick Add', 'menu:quickadd')],
-  [Markup.button.callback('📊 Check a Price', 'menu:price'), Markup.button.callback('❓ Help', 'menu:help')],
+  [Markup.button.callback('🔀 Build a Pair', 'menu:pairbuilder'), Markup.button.callback('📊 Check a Price', 'menu:price')],
+  [Markup.button.callback('❓ Help', 'menu:help')],
 ]);
 
 // Common symbols for the Nigerian market this bot is built around: USD, GBP,
@@ -43,6 +44,34 @@ function quickAddMenu() {
     );
   }
   rows.push([Markup.button.callback('⬅️ Back', 'menu:back')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+/**
+ * Pair builder: instead of typing a symbol, tap the first currency, then the
+ * second - the bot builds the pair in exactly that tap order (tap NGN then
+ * USD -> NGN/USD) and immediately shows the same live price-suggestion flow
+ * as everywhere else. No server-side session state needed: the first pick
+ * travels forward inside the second keyboard's own callback_data, so each
+ * tap is a fully self-contained request.
+ */
+const PICKER_CURRENCIES = ['USD', 'NGN', 'GBP', 'EUR', 'CAD'];
+
+function pairBuilderStep1Keyboard() {
+  const buttons = PICKER_CURRENCIES.map((c) => Markup.button.callback(c, `pair1:${c}`));
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+  rows.push([Markup.button.callback('⬅️ Back', 'menu:back')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function pairBuilderStep2Keyboard(firstCurrency) {
+  const buttons = PICKER_CURRENCIES.filter((c) => c !== firstCurrency).map((c) =>
+    Markup.button.callback(c, `pair2:${firstCurrency}:${c}`)
+  );
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 3) rows.push(buttons.slice(i, i + 3));
+  rows.push([Markup.button.callback('⬅️ Start over', 'menu:pairbuilder')]);
   return Markup.inlineKeyboard(rows);
 }
 
@@ -89,6 +118,38 @@ export function registerCommands(bot) {
   bot.action(/^remove:(.+)$/, handleRemoveCallback);
   bot.action(/^watch:(.+)$/, handleQuickWatch);
   bot.action(/^setalert:(.+):([\d.]+)$/, handleSetAlertFromSuggestion);
+  bot.action('menu:pairbuilder', handlePairBuilderStart);
+  bot.action(/^pair1:([A-Z]{3})$/, handlePairStep1);
+  bot.action(/^pair2:([A-Z]{3}):([A-Z]{3})$/, handlePairStep2);
+}
+
+async function handlePairBuilderStart(ctx) {
+  await ctx.answerCbQuery();
+  const text = '🔀 Tap the FIRST currency:';
+  await ctx.editMessageText(text, pairBuilderStep1Keyboard()).catch(() => ctx.reply(text, pairBuilderStep1Keyboard()));
+}
+
+async function handlePairStep1(ctx) {
+  const first = ctx.match[1];
+  await ctx.answerCbQuery();
+  const text = `First: ${first}. Now tap the SECOND currency to compare it against:`;
+  await ctx.editMessageText(text, pairBuilderStep2Keyboard(first)).catch(() =>
+    ctx.reply(text, pairBuilderStep2Keyboard(first))
+  );
+}
+
+async function handlePairStep2(ctx) {
+  const first = ctx.match[1];
+  const second = ctx.match[2];
+  await ctx.answerCbQuery();
+
+  const apiSymbol = toApiSymbol(first + second);
+  if (!apiSymbol) {
+    return ctx.reply(`Sorry, I couldn't build a valid pair from ${first} and ${second}.`);
+  }
+
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, null);
+  await replyWithThresholdSuggestion(ctx, apiSymbol);
 }
 
 async function handleQuickAddMenu(ctx) {
@@ -207,7 +268,7 @@ async function handleWatch(ctx) {
   const [rawSymbol, rawThreshold] = args;
 
   if (!rawSymbol) {
-    return ctx.reply('Usage: /watch SYMBOL [threshold]\nExample: /watch EURUSD 1.1800');
+    return ctx.reply('🔀 Tap the FIRST currency (or type /watch SYMBOL directly if you already know it):', pairBuilderStep1Keyboard());
   }
 
   const apiSymbol = toApiSymbol(rawSymbol);
