@@ -35,13 +35,30 @@ export function toDisplaySymbol(apiSymbol) {
   return apiSymbol.replace('/', '');
 }
 
-/** Formats a price with sensible decimal places for forex vs. crypto vs. metals */
+const CURRENCY_SYMBOLS = {
+  USD: '$',
+  NGN: '₦',
+  EUR: '€',
+  GBP: '£',
+  CAD: 'C$',
+  JPY: '¥',
+};
+
+/** Formats a price with sensible decimal places for forex vs. crypto vs. metals, prefixed with the quote currency's symbol. */
 export function formatPrice(price, apiSymbol) {
   const num = Number(price);
   if (Number.isNaN(num)) return String(price);
   // BTC and other high-value assets: 2 decimals. Forex/metals: keep more precision.
   const decimals = num >= 100 ? 2 : 4;
-  return num.toFixed(decimals);
+  const formatted = num.toFixed(decimals);
+
+  // For a pair like "BTC/USD" or "USD/NGN", the quote currency (what the
+  // price is denominated in) is the part after the slash. Bare tickers like
+  // stock indices ("SPX") have no slash and no currency to prefix.
+  const quoteCurrency = apiSymbol?.includes('/') ? apiSymbol.split('/')[1] : null;
+  const symbol = quoteCurrency ? CURRENCY_SYMBOLS[quoteCurrency] : null;
+
+  return symbol ? `${symbol}${formatted}` : formatted;
 }
 
 /** Formats a signed percentage change, e.g. +0.54% / -1.20% */
