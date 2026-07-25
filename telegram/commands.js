@@ -109,31 +109,46 @@ async function handleQuickWatch(ctx) {
   const apiSymbol = ctx.match[1];
   await addToWatchlist(String(ctx.chat.id), apiSymbol, null);
   await ctx.answerCbQuery(`Added ${toDisplaySymbol(apiSymbol)}`);
+  await replyWithThresholdSuggestion(ctx, apiSymbol);
+}
 
+/**
+ * Shows the current price, a suggested round-number alert threshold, a
+ * one-tap button to accept it, and the equivalent /watch command as plain
+ * copyable text for anyone who wants to pick their own number instead.
+ * Used both after a quick-add button tap and after a typed
+ * "/watch SYMBOL" with no price given.
+ *
+ * IMPORTANT: the copyable command line uses the RAW unformatted number
+ * (e.g. "68500"), not formatPrice()'s currency-prefixed display string
+ * (e.g. "$68,500.00") - our own /watch parser can't read a "$" or "₦"
+ * prefix, so putting the display string there would hand back a command
+ * that fails when pasted.
+ */
+async function replyWithThresholdSuggestion(ctx, apiSymbol) {
   const display = toDisplaySymbol(apiSymbol);
 
   try {
     const quote = await getQuote(apiSymbol);
     const suggested = suggestThreshold(quote.price, quote.changePercent);
-    const suggestedDisplay = formatPrice(suggested, apiSymbol);
 
     await ctx.reply(
       [
         `✅ Now watching ${display}`,
         `Current price: ${formatPrice(quote.price, apiSymbol)}`,
         '',
-        `💡 Suggested alert: ${suggestedDisplay}`,
+        `💡 Suggested alert: ${formatPrice(suggested, apiSymbol)}`,
         '',
-        "Not the number you want? Copy this and swap in your own price:",
-        `/watch ${display} ${suggestedDisplay}`,
+        'Not the number you want? Copy this and swap in your own price:',
+        `/watch ${display} ${suggested}`,
       ].join('\n'),
       Markup.inlineKeyboard([
-        [Markup.button.callback(`✅ Use ${suggestedDisplay}`, `setalert:${apiSymbol}:${suggested}`)],
+        [Markup.button.callback(`✅ Use ${formatPrice(suggested, apiSymbol)}`, `setalert:${apiSymbol}:${suggested}`)],
       ])
     );
   } catch (err) {
     // Added successfully either way - just couldn't fetch a live price to base a suggestion on.
-    logger.error('Failed to suggest a threshold after quick-add', { symbol: apiSymbol, error: err.message });
+    logger.error('Failed to suggest a threshold', { symbol: apiSymbol, error: err.message });
     await ctx.reply(`✅ Now watching ${display}. Want an alert? Send:\n/watch ${display} <price>`);
   }
 }
@@ -210,11 +225,12 @@ async function handleWatch(ctx) {
 
   await addToWatchlist(String(ctx.chat.id), apiSymbol, threshold);
 
-  const thresholdNote = threshold !== null
-    ? `I'll alert you when it crosses ${threshold}.`
-    : "No alert price set yet - I'll just track it. Add one anytime with /watch " + rawSymbol.toUpperCase() + ' <price>.';
+  if (threshold !== null) {
+    return ctx.reply(`✅ Now watching ${toDisplaySymbol(apiSymbol)}. I'll alert you when it crosses ${threshold}.`);
+  }
 
-  await ctx.reply(`✅ Now watching ${toDisplaySymbol(apiSymbol)}. ${thresholdNote}`);
+  // No price given - show a suggestion instead of just a bare "no alert set" note.
+  await replyWithThresholdSuggestion(ctx, apiSymbol);
 }
 
 /** Builds the watchlist message text + a remove button per item. Shared by /list and the menu button. */
