@@ -27,6 +27,8 @@ async function request(path, options = {}) {
 
 export const api = {
   health: () => request('/api/health'),
+  verifyTelegramInitData: (initData) =>
+    request('/api/telegram/verify-init-data', { method: 'POST', body: JSON.stringify({ initData }) }),
   getPrice: (symbol) => request(`/api/price/${symbol}`),
   // Batched - always prefer this over calling getPrice() in a loop, so N
   // watched symbols means one request instead of N (see server.js/marketData.js
