@@ -21,26 +21,30 @@ export function Overview() {
 
     async function load() {
       setLoading(true);
-      try {
-        const [wl, recentAlerts, health] = await Promise.all([
-          api.getWatchlist(session.chatId),
-          api.getRecentAlerts(session.chatId),
-          api.health().catch(() => null),
-        ]);
-        if (cancelled) return;
-        setWatchlist(wl.items);
-        setAlerts(recentAlerts.alerts);
-        setBotOnline(!!health);
 
-        const symbols = wl.items.map((item) => item.symbol.replace('/', ''));
-        const { prices: priceMap } = symbols.length ? await api.getPrices(symbols) : { prices: {} };
-        const prices = Object.values(priceMap).filter(Boolean);
-        if (!cancelled) setTickerData(prices);
-      } catch {
-        if (!cancelled) setBotOnline(false);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      // Each call fails independently now - a hiccup in one (say, a slow
+      // Firestore read) no longer wipes out data that DID load successfully,
+      // and critically, "bot online" is determined ONLY by the health check
+      // actually failing, not by any unrelated call throwing.
+      const health = await api.health().catch(() => null);
+      if (cancelled) return;
+      setBotOnline(!!health);
+
+      const wl = await api.getWatchlist(session.chatId).catch(() => ({ items: [] }));
+      if (cancelled) return;
+      setWatchlist(wl.items);
+
+      const recentAlerts = await api.getRecentAlerts(session.chatId).catch(() => ({ alerts: [] }));
+      if (cancelled) return;
+      setAlerts(recentAlerts.alerts);
+
+      const symbols = wl.items.map((item) => item.symbol.replace('/', ''));
+      const { prices: priceMap } = symbols.length
+        ? await api.getPrices(symbols).catch(() => ({ prices: {} }))
+        : { prices: {} };
+      if (!cancelled) setTickerData(Object.values(priceMap).filter(Boolean));
+
+      if (!cancelled) setLoading(false);
     }
 
     load();
