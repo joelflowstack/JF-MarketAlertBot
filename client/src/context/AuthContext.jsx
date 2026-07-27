@@ -1,16 +1,24 @@
 /**
  * src/context/AuthContext.jsx
  *
- * "Simple demo authentication" per the MVP spec: no password check against a
- * real backend, just a name + Telegram Chat ID, persisted in this browser so
- * a refresh doesn't log you out. The Chat ID is the real link to your data -
- * it's the same ID the bot uses as the watchlist key, so whatever you /watch
- * in Telegram shows up in the dashboard under that same ID.
+ * Two authentication paths, depending on how the dashboard is opened:
  *
- * Phase 5 replaces this with real Firebase Authentication without changing
- * how the rest of the app consumes useAuth().
+ * 1. Inside the Telegram Mini App (the real, intended way): Telegram gives
+ *    us a signed "initData" string proving which real Telegram user opened
+ *    it. We send that to our backend, which verifies the cryptographic
+ *    signature (see server.js) and hands back a trustworthy Chat ID - no
+ *    typing, no self-reported identity that could be spoofed.
+ *
+ * 2. Opened directly in a normal browser (e.g. for local testing, or
+ *    before the Mini App was set up): falls back to the original "simple
+ *    demo authentication" - name + Chat ID typed in manually, persisted in
+ *    this browser. Still useful for testing outside Telegram.
+ *
+ * Either way, the rest of the app just calls useAuth() and doesn't care
+ * which path produced the session.
  */
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { api } from '../lib/api';
 
 const AuthContext = createContext(null);
 
@@ -21,6 +29,9 @@ export function AuthProvider({ children }) {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
   });
+  // Starts true so the app doesn't flash the manual Login screen while we
+  // check whether we're actually inside Telegram - see the effect below.
+  const [isVerifying, setIsVerifying] = useState(true);
 
   const login = useCallback((name, chatId) => {
     const next = { name, chatId: String(chatId) };
@@ -33,8 +44,35 @@ export function AuthProvider({ children }) {
     setSession(null);
   }, []);
 
+  useEffect(() => {
+    const tg = window.Telegram?.WebApp;
+
+    // Not opened inside Telegram (e.g. a normal browser tab) - nothing to
+    // verify, fall straight through to whatever session (or lack of one)
+    // was already loaded from localStorage above.
+    if (!tg?.initData) {
+      setIsVerifying(false);
+      return;
+    }
+
+    tg.ready();
+    tg.expand();
+
+    // Telegram-verified identity is authoritative whenever it's available -
+    // it always wins over/replaces any previously stored manual session,
+    // since it's cryptographically real rather than self-reported.
+    api
+      .verifyTelegramInitData(tg.initData)
+      .then(({ chatId, name }) => login(name, chatId))
+      .catch(() => {
+        // Verification failed (e.g. expired init data) - fall back to
+        // whatever manual session already existed, if any.
+      })
+      .finally(() => setIsVerifying(false));
+  }, [login]);
+
   return (
-    <AuthContext.Provider value={{ session, login, logout, isAuthenticated: !!session }}>
+    <AuthContext.Provider value={{ session, login, logout, isAuthenticated: !!session, isVerifying }}>
       {children}
     </AuthContext.Provider>
   );
