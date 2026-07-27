@@ -9,6 +9,7 @@
  *
  * Routes:
  *   GET    /api/health                      liveness check
+ *   POST   /api/telegram/verify-init-data    verifies a Telegram Mini App session, returns the real Chat ID
  *   POST   /api/telegram/webhook             Telegram webhook (production bot transport)
  *   GET    /api/price/:symbol               current quote for a symbol
  *   GET    /api/prices?symbols=A,B,C         batched quotes for multiple symbols (used by the dashboard)
@@ -20,6 +21,7 @@
  *   POST   /api/cron/check-alerts           triggers one alert-check pass (secret-protected)
  */
 import 'dotenv/config';
+import crypto from 'node:crypto';
 import express from 'express';
 import cors from 'cors';
 
@@ -64,6 +66,66 @@ app.use(express.json());
 
 /** Wraps async route handlers so rejected promises reach Express's error handler. */
 const asyncHandler = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+
+// ---------------------------------------------------------------------------
+// Telegram Mini App authentication
+//
+// A Telegram Mini App gives the frontend a signed "initData" string proving
+// which real Telegram user opened it. We verify that signature here using
+// the bot token as the shared secret - Telegram's documented algorithm:
+// https://core.telegram.org/bots/webapps#validating-data-received-via-the-mini-app
+//
+// This matters because without it, the dashboard would have to trust
+// whatever chat ID the browser claims to be - meaning anyone could type in
+// a stranger's Chat ID and see their watchlist. This endpoint makes the
+// Chat ID cryptographically provable instead of self-reported.
+// ---------------------------------------------------------------------------
+function verifyTelegramInitData(initData, botToken) {
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash) return null;
+  params.delete('hash');
+
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+
+  const secretKey = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const computedHash = crypto.createHmac('sha256', secretKey).update(dataCheckString).digest('hex');
+
+  if (computedHash !== hash) return null; // signature doesn't match - reject
+
+  const authDate = parseInt(params.get('auth_date'), 10);
+  const ageSeconds = Date.now() / 1000 - authDate;
+  if (!authDate || ageSeconds > 86400) return null; // reject stale/replayed init data (>24h old)
+
+  try {
+    return JSON.parse(params.get('user') || 'null');
+  } catch {
+    return null;
+  }
+}
+
+app.post(
+  '/api/telegram/verify-init-data',
+  asyncHandler(async (req, res) => {
+    const { initData } = req.body;
+    if (!initData) {
+      return res.status(400).json({ error: 'initData is required' });
+    }
+
+    const user = verifyTelegramInitData(initData, process.env.TELEGRAM_BOT_TOKEN);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid or expired Telegram init data' });
+    }
+
+    res.json({
+      chatId: String(user.id),
+      name: [user.first_name, user.last_name].filter(Boolean).join(' ') || user.username || 'Telegram User',
+    });
+  })
+);
 
 // ---------------------------------------------------------------------------
 // Health check
