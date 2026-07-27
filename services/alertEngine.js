@@ -6,7 +6,7 @@
  * bot directly. This keeps the engine testable and means Phase 3
  * (telegram/bot.js) just plugs its send function in — no changes needed here.
  */
-import { getAllWatchlists, updateLastPrice } from './watchlist.js';
+import { getAllWatchlists, updateLastPrice, setThreshold } from './watchlist.js';
 import { getQuotes } from './marketData.js';
 import { recordAlert } from './alertHistory.js';
 import { formatPrice, formatChangePercent, formatTimeUTC, toDisplaySymbol } from '../utils/formatters.js';
@@ -54,6 +54,13 @@ export async function checkAllAlerts(notify) {
               price: quote.price,
               changePercent: quote.changePercent,
             });
+            // One-shot: clear the threshold after it fires. Without this,
+            // a price oscillating right around the line (very common -
+            // that's what "crossing" a level in a choppy market looks
+            // like) would fire a fresh alert on every single back-and-forth,
+            // which reads as spam rather than a meaningful notification.
+            // The symbol stays on the watchlist; only the trigger clears.
+            await setThreshold(userId, item.symbol, null);
             alertsSent += 1;
           } catch (err) {
             logger.error('Failed to send alert notification', { userId, symbol: item.symbol, error: err.message });
@@ -98,6 +105,8 @@ function formatAlertMessage(apiSymbol, quote, threshold) {
   if (apiSymbol.includes('NGN')) {
     lines.push('', 'ℹ️ Official interbank rate. Parallel market typically trades a few % higher.');
   }
+
+  lines.push('', `This alert has cleared - still watching ${toDisplaySymbol(apiSymbol)}, but set a new price with /watch ${toDisplaySymbol(apiSymbol)} <price> if you want another ping.`);
 
   return lines.join('\n');
 }
