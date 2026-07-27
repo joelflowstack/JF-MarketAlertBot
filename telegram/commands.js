@@ -15,6 +15,11 @@ import { getQuote } from '../services/marketData.js';
 import { toApiSymbol, toDisplaySymbol, formatPrice, formatChangePercent, formatTimeUTC } from '../utils/formatters.js';
 import { logger } from '../utils/logger.js';
 
+const WATCH_CHOICE_MENU = Markup.inlineKeyboard([
+  [Markup.button.callback('🔀 Build a Pair', 'menu:pairbuilder')],
+  [Markup.button.callback('💱 Ready-made', 'menu:quickadd')],
+]);
+
 const MAIN_MENU = Markup.inlineKeyboard([
   [Markup.button.callback('👀 My Watchlist', 'menu:list'), Markup.button.callback('💱 Quick Add', 'menu:quickadd')],
   [Markup.button.callback('🔀 Build a Pair', 'menu:pairbuilder'), Markup.button.callback('📊 Check a Price', 'menu:price')],
@@ -268,7 +273,15 @@ async function handleWatch(ctx) {
   const [rawSymbol, rawThreshold] = args;
 
   if (!rawSymbol) {
-    return ctx.reply('🔀 Tap the FIRST currency (or type /watch SYMBOL directly if you already know it):', pairBuilderStep1Keyboard());
+    return ctx.reply(
+      [
+        '💡 "Build a Pair" covers any currency combo — recommended if you\'re not sure what you want.',
+        '"Ready-made" is faster if one of our common picks fits.',
+        '',
+        'What would you like to do? (Or type /watch SYMBOL directly if you already know it.)',
+      ].join('\n'),
+      WATCH_CHOICE_MENU
+    );
   }
 
   const apiSymbol = toApiSymbol(rawSymbol);
