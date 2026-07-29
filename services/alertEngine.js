@@ -1,10 +1,12 @@
 /**
  * services/alertEngine.js
  *
- * Core alert logic, deliberately decoupled from Telegram: it accepts a
- * `notify(userId, message)` function rather than importing the Telegram
- * bot directly. This keeps the engine testable and means Phase 3
- * (telegram/bot.js) just plugs its send function in — no changes needed here.
+ * Core alert logic, deliberately decoupled from any specific messaging
+ * platform: it accepts a `notifiers` map ({ telegram: fn, discord: fn })
+ * rather than importing a bot directly, and picks the right one per
+ * watchlist item based on which platform it was added from. This means
+ * adding a third platform later is a one-line addition to the notifiers
+ * map wherever checkAllAlerts() is called - nothing in here changes.
  */
 import { getAllWatchlists, updateLastPrice, setThreshold } from './watchlist.js';
 import { getQuotes } from './marketData.js';
@@ -13,13 +15,14 @@ import { formatPrice, formatChangePercent, formatTimeUTC, toDisplaySymbol } from
 import { logger } from '../utils/logger.js';
 
 /**
- * Checks every watched symbol for every user and fires notify() when a
- * user-defined threshold is crossed (in either direction) since the last check.
+ * Checks every watched symbol for every user and fires the right platform's
+ * notify() when a user-defined threshold is crossed (in either direction)
+ * since the last check.
  *
- * @param {(userId: string, message: string) => Promise<void>} notify
+ * @param {{ telegram?: (userId: string, message: string) => Promise<void>, discord?: (userId: string, message: string) => Promise<void> }} notifiers
  * @returns {Promise<{checked: number, alertsSent: number}>}
  */
-export async function checkAllAlerts(notify) {
+export async function checkAllAlerts(notifiers) {
   const watchlists = await getAllWatchlists();
 
   // Gather every distinct symbol across all users so we hit the market-data
@@ -46,6 +49,7 @@ export async function checkAllAlerts(notify) {
       if (item.threshold !== null && item.threshold !== undefined) {
         const crossed = didCrossThreshold(item.lastPrice, quote.price, item.threshold);
         if (crossed) {
+          const notify = notifiers[item.platform] || notifiers.telegram;
           try {
             await notify(userId, formatAlertMessage(item.symbol, quote, item.threshold));
             await recordAlert(userId, {
@@ -63,7 +67,7 @@ export async function checkAllAlerts(notify) {
             await setThreshold(userId, item.symbol, null);
             alertsSent += 1;
           } catch (err) {
-            logger.error('Failed to send alert notification', { userId, symbol: item.symbol, error: err.message });
+            logger.error('Failed to send alert notification', { userId, symbol: item.symbol, platform: item.platform, error: err.message });
           }
         }
       }
