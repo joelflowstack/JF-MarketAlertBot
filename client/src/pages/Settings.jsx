@@ -1,32 +1,39 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
 import { useAuth } from '../context/AuthContext';
+import { api } from '../lib/api';
 import { Card } from '../components/Card';
-
-const PREFS_KEY = 'market-alert-bot:prefs';
-
-function loadPrefs() {
-  const raw = localStorage.getItem(PREFS_KEY);
-  return raw ? JSON.parse(raw) : { thresholdAlerts: true, dailySummary: false };
-}
+import { LoadingSpinner } from '../components/LoadingSpinner';
 
 export function Settings() {
   const { session } = useAuth();
-  const [prefs, setPrefs] = useState(loadPrefs);
+  const [prefs, setPrefs] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  function toggle(key) {
+  useEffect(() => {
+    api
+      .getSettings(session.chatId)
+      .then(setPrefs)
+      .catch(() => toast.error('Could not load your settings.'))
+      .finally(() => setLoading(false));
+  }, [session.chatId]);
+
+  async function toggle(key) {
     const next = { ...prefs, [key]: !prefs[key] };
-    setPrefs(next);
-    localStorage.setItem(PREFS_KEY, JSON.stringify(next));
-    toast.success('Preference saved');
+    setPrefs(next); // optimistic update
+    try {
+      await api.updateSettings(session.chatId, { [key]: next[key] });
+      toast.success('Preference saved');
+    } catch {
+      setPrefs(prefs); // revert on failure
+      toast.error('Could not save that - try again.');
+    }
   }
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
       <h1 className="font-display text-2xl font-semibold text-text-primary mb-1">Settings</h1>
-      <p className="text-text-secondary text-sm mb-6">
-        Preferences saved to this browser for now — full account sync arrives with database support.
-      </p>
+      <p className="text-text-secondary text-sm mb-6">Synced to your account - the same everywhere you log in.</p>
 
       <Card title="Profile" className="mb-4">
         <div className="space-y-3">
@@ -42,20 +49,26 @@ export function Settings() {
       </Card>
 
       <Card title="Notifications">
-        <div className="space-y-4">
-          <ToggleRow
-            label="Threshold alerts"
-            description="Get notified the moment a watched price crosses your threshold."
-            checked={prefs.thresholdAlerts}
-            onChange={() => toggle('thresholdAlerts')}
-          />
-          <ToggleRow
-            label="Daily summary"
-            description="A daily recap of your watchlist performance (coming soon)."
-            checked={prefs.dailySummary}
-            onChange={() => toggle('dailySummary')}
-          />
-        </div>
+        {loading ? (
+          <div className="flex justify-center py-6">
+            <LoadingSpinner size={22} />
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <ToggleRow
+              label="Threshold alerts"
+              description="Get notified the moment a watched price crosses your threshold."
+              checked={prefs.thresholdAlerts}
+              onChange={() => toggle('thresholdAlerts')}
+            />
+            <ToggleRow
+              label="Daily summary"
+              description="A daily recap of your watchlist performance (coming soon)."
+              checked={prefs.dailySummary}
+              onChange={() => toggle('dailySummary')}
+            />
+          </div>
+        )}
       </Card>
     </div>
   );
