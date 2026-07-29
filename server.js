@@ -17,7 +17,9 @@
  *   POST   /api/watchlist                   add a symbol { userId, symbol, threshold? }
  *   DELETE /api/watchlist/:userId/:symbol   remove a symbol
  *   GET    /api/alerts/:userId              recent alert history for a user
- *   GET    /api/admin/stats                 aggregate stats for the admin panel
+ *   GET    /api/settings/:userId             a user's notification settings
+ *   POST   /api/settings                     update settings { userId, thresholdAlerts?, dailySummary? }
+ *   GET    /api/admin/stats?chatId=X         aggregate stats - requires chatId in ADMIN_CHAT_IDS
  *   POST   /api/cron/check-alerts           triggers one alert-check pass (secret-protected)
  */
 import 'dotenv/config';
@@ -34,6 +36,7 @@ import {
 } from './services/watchlist.js';
 import { checkAllAlerts } from './services/alertEngine.js';
 import { getRecentAlerts, getTotalAlertsSent } from './services/alertHistory.js';
+import { getSettings, updateSettings } from './services/settings.js';
 import { toApiSymbol, formatPrice, formatChangePercent, formatTimeUTC } from './utils/formatters.js';
 import { logger } from './utils/logger.js';
 import { bot, sendTelegramMessage } from './telegram/bot.js';
@@ -242,11 +245,50 @@ app.get(
 );
 
 // ---------------------------------------------------------------------------
-// Admin stats
+// Settings
 // ---------------------------------------------------------------------------
+app.get(
+  '/api/settings/:userId',
+  asyncHandler(async (req, res) => {
+    const settings = await getSettings(req.params.userId);
+    res.json(settings);
+  })
+);
+
+app.post(
+  '/api/settings',
+  asyncHandler(async (req, res) => {
+    const { userId, ...partialSettings } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: 'userId is required' });
+    }
+    const settings = await updateSettings(userId, partialSettings);
+    res.json(settings);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Admin stats
+//
+// Gated by ADMIN_CHAT_IDS (comma-separated Telegram Chat IDs) in the
+// environment. Without this, any dashboard visitor - logged in with ANY
+// name and Chat ID, since login is just self-reported outside the Mini
+// App - could view platform-wide stats for every user. This makes the
+// check real: the caller's chatId must be in the admin allowlist, verified
+// server-side (never trust a client-side "am I admin" flag alone).
+// ---------------------------------------------------------------------------
+function isAdmin(chatId) {
+  const adminIds = (process.env.ADMIN_CHAT_IDS || '').split(',').map((id) => id.trim()).filter(Boolean);
+  return adminIds.includes(String(chatId));
+}
+
 app.get(
   '/api/admin/stats',
   asyncHandler(async (req, res) => {
+    if (!isAdmin(req.query.chatId)) {
+      return res.status(403).json({ error: 'Not authorized' });
+    }
+
     const watchlists = await getAllWatchlists();
     const totalUsers = watchlists.length;
     const uniqueAssets = new Set(watchlists.flatMap(({ items }) => items.map((i) => i.symbol)));
