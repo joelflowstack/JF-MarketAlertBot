@@ -13,6 +13,7 @@ import { Markup } from 'telegraf';
 import { addToWatchlist, removeFromWatchlist, listWatchlist } from '../services/watchlist.js';
 import { getQuote } from '../services/marketData.js';
 import { toApiSymbol, toDisplaySymbol, formatPrice, formatChangePercent, formatTimeUTC } from '../utils/formatters.js';
+import { suggestThreshold } from '../utils/suggestThreshold.js';
 import { logger } from '../utils/logger.js';
 
 const WATCH_CHOICE_MENU = Markup.inlineKeyboard([
@@ -80,30 +81,7 @@ function pairBuilderStep2Keyboard(firstCurrency) {
   return Markup.inlineKeyboard(rows);
 }
 
-/**
- * Suggests a "logical" alert threshold: the next round number in whatever
- * direction the price is currently trending, sized to the asset's own scale
- * (e.g. nearest 50 for a ~1400 NGN pair, nearest 0.01 for a ~1.1 forex pair).
- * This is a simple heuristic, not a prediction - it just picks a sensible
- * round milestone near the current price rather than an arbitrary decimal.
- */
-function suggestThreshold(price, changePercent) {
-  const direction = changePercent >= 0 ? 1 : -1;
 
-  let step;
-  if (price >= 10000) step = 500;
-  else if (price >= 1000) step = 50;
-  else if (price >= 100) step = 5;
-  else if (price >= 10) step = 0.5;
-  else if (price >= 1) step = 0.01;
-  else step = 0.001;
-
-  let suggested = direction > 0 ? Math.ceil(price / step) * step : Math.floor(price / step) * step;
-  if (suggested === price) suggested += direction * step; // ensure it's actually a different, meaningful level
-
-  const decimals = step >= 1 ? 0 : String(step).split('.')[1].length;
-  return parseFloat(suggested.toFixed(decimals));
-}
 
 export function registerCommands(bot) {
   bot.start(handleStart);
@@ -153,7 +131,7 @@ async function handlePairStep2(ctx) {
     return ctx.reply(`Sorry, I couldn't build a valid pair from ${first} and ${second}.`);
   }
 
-  await addToWatchlist(String(ctx.chat.id), apiSymbol, null);
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, null, 'telegram');
   await replyWithThresholdSuggestion(ctx, apiSymbol);
 }
 
@@ -173,7 +151,7 @@ async function handleBackToMenu(ctx) {
 
 async function handleQuickWatch(ctx) {
   const apiSymbol = ctx.match[1];
-  await addToWatchlist(String(ctx.chat.id), apiSymbol, null);
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, null, 'telegram');
   await ctx.answerCbQuery(`Added ${toDisplaySymbol(apiSymbol)}`);
   await replyWithThresholdSuggestion(ctx, apiSymbol);
 }
@@ -222,7 +200,7 @@ async function replyWithThresholdSuggestion(ctx, apiSymbol) {
 async function handleSetAlertFromSuggestion(ctx) {
   const apiSymbol = ctx.match[1];
   const threshold = parseFloat(ctx.match[2]);
-  await addToWatchlist(String(ctx.chat.id), apiSymbol, threshold);
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, threshold, 'telegram');
   await ctx.answerCbQuery(`Alert set at ${threshold}`);
   await ctx.reply(`🔔 Alert set: I'll notify you when ${toDisplaySymbol(apiSymbol)} crosses ${threshold}.`);
 }
@@ -297,7 +275,7 @@ async function handleWatch(ctx) {
     }
   }
 
-  await addToWatchlist(String(ctx.chat.id), apiSymbol, threshold);
+  await addToWatchlist(String(ctx.chat.id), apiSymbol, threshold, 'telegram');
 
   if (threshold !== null) {
     return ctx.reply(`✅ Now watching ${toDisplaySymbol(apiSymbol)}. I'll alert you when it crosses ${threshold}.`);
