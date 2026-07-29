@@ -35,3 +35,10 @@ export async function updateSettings(userId, partialSettings) {
   const updated = await ref.get();
   return { ...DEFAULT_SETTINGS, ...updated.data() };
 }
+
+/** Returns the userIds of everyone who's opted into the daily summary - used by the daily-summary cron. */
+export async function getUserIdsWithDailySummaryEnabled() {
+  const db = getDb();
+  const snap = await db.collection(COLLECTION).where('dailySummary', '==', true).get();
+  return snap.docs.map((doc) => doc.id);
+}
