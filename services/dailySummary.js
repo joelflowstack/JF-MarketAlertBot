@@ -15,10 +15,10 @@ import { formatPrice, formatChangePercent, toDisplaySymbol } from '../utils/form
 import { logger } from '../utils/logger.js';
 
 /**
- * @param {(userId: string, message: string) => Promise<void>} notify
+ * @param {{ telegram?: (userId: string, message: string) => Promise<void>, discord?: (userId: string, message: string) => Promise<void> }} notifiers
  * @returns {Promise<{usersChecked: number, sent: number}>}
  */
-export async function sendDailySummaries(notify) {
+export async function sendDailySummaries(notifiers) {
   const userIds = await getUserIdsWithDailySummaryEnabled();
   let sent = 0;
 
@@ -46,11 +46,18 @@ export async function sendDailySummaries(notify) {
       'Turn this off anytime in your dashboard Settings.',
     ].join('\n');
 
+    // A user's watchlist items all carry which platform they were added
+    // from - use that to pick the right notify function. Defaults to
+    // telegram if somehow empty (shouldn't happen, we already checked
+    // items.length above).
+    const platform = items[0]?.platform || 'telegram';
+    const notify = notifiers[platform] || notifiers.telegram;
+
     try {
       await notify(userId, message);
       sent += 1;
     } catch (err) {
-      logger.error('Failed to send daily summary', { userId, error: err.message });
+      logger.error('Failed to send daily summary', { userId, platform, error: err.message });
     }
   }
 
