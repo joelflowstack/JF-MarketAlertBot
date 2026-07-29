@@ -21,6 +21,7 @@
  *   POST   /api/settings                     update settings { userId, thresholdAlerts?, dailySummary? }
  *   GET    /api/admin/stats?chatId=X         aggregate stats - requires chatId in ADMIN_CHAT_IDS
  *   POST   /api/cron/check-alerts           triggers one alert-check pass (secret-protected)
+ *   POST   /api/cron/daily-summary          sends daily recaps to opted-in users (secret-protected, separate schedule)
  */
 import 'dotenv/config';
 import crypto from 'node:crypto';
@@ -35,6 +36,7 @@ import {
   getAllWatchlists,
 } from './services/watchlist.js';
 import { checkAllAlerts } from './services/alertEngine.js';
+import { sendDailySummaries } from './services/dailySummary.js';
 import { getRecentAlerts, getTotalAlertsSent } from './services/alertHistory.js';
 import { getSettings, updateSettings } from './services/settings.js';
 import { toApiSymbol, formatPrice, formatChangePercent, formatTimeUTC } from './utils/formatters.js';
@@ -318,6 +320,26 @@ app.post(
     }
 
     const result = await checkAllAlerts(sendTelegramMessage);
+    res.json(result);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Daily summary cron endpoint
+// Triggered once a day (NOT every minute - set up as a SEPARATE cron-job.org
+// job with its own once-daily schedule) - shares the same CRON_SECRET as the
+// alert checker, but must be its own job since the two run on completely
+// different frequencies.
+// ---------------------------------------------------------------------------
+app.post(
+  '/api/cron/daily-summary',
+  asyncHandler(async (req, res) => {
+    const providedSecret = req.headers.authorization?.replace('Bearer ', '');
+    if (!process.env.CRON_SECRET || providedSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const result = await sendDailySummaries(sendTelegramMessage);
     res.json(result);
   })
 );
