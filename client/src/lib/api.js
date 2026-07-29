@@ -43,5 +43,11 @@ export const api = {
   removeFromWatchlist: (userId, symbol) =>
     request(`/api/watchlist/${userId}/${symbol}`, { method: 'DELETE' }),
   getRecentAlerts: (userId) => request(`/api/alerts/${userId}`),
-  getAdminStats: () => request('/api/admin/stats'),
+  getSettings: (userId) => request(`/api/settings/${userId}`),
+  updateSettings: (userId, partialSettings) =>
+    request('/api/settings', { method: 'POST', body: JSON.stringify({ userId, ...partialSettings }) }),
+  // chatId is sent so the backend can verify it against ADMIN_CHAT_IDS -
+  // access control is enforced server-side, this is just how the caller's
+  // identity gets there.
+  getAdminStats: (chatId) => request(`/api/admin/stats?chatId=${chatId}`),
 };
