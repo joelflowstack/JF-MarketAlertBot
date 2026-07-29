@@ -63,7 +63,7 @@ export function Settings() {
             />
             <ToggleRow
               label="Daily summary"
-              description="A daily recap of your watchlist performance (coming soon)."
+              description="One message a day with current price, high/low, and change for everything you're watching."
               checked={prefs.dailySummary}
               onChange={() => toggle('dailySummary')}
             />
