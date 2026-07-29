@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Users, LineChart, Bell, Radio } from 'lucide-react';
+import { Users, LineChart, Bell, Radio, ShieldOff } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { useAuth } from '../context/AuthContext';
 import { api } from '../lib/api';
 import { Card } from '../components/Card';
 import { StatusBadge } from '../components/StatusBadge';
@@ -13,16 +14,24 @@ const COLOR_CLASSES = {
 };
 
 export function Admin() {
+  const { session } = useAuth();
   const [stats, setStats] = useState(null);
+  const [notAuthorized, setNotAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     api
-      .getAdminStats()
+      .getAdminStats(session.chatId)
       .then(setStats)
-      .catch(() => toast.error('Could not load admin stats.'))
+      .catch((err) => {
+        if (err.message?.includes('Not authorized')) {
+          setNotAuthorized(true);
+        } else {
+          toast.error('Could not load admin stats.');
+        }
+      })
       .finally(() => setLoading(false));
-  }, []);
+  }, [session.chatId]);
 
   const cards = stats
     ? [
@@ -31,6 +40,23 @@ export function Admin() {
         { label: 'Alerts Sent', value: stats.alertsSent, icon: Bell, color: 'warning' },
       ]
     : [];
+
+  if (!loading && notAuthorized) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <Card>
+          <div className="text-center py-10">
+            <ShieldOff size={28} className="mx-auto text-text-secondary mb-3" />
+            <p className="text-sm text-text-primary font-medium mb-1">Admin access only</p>
+            <p className="text-sm text-text-secondary">
+              This account (Chat ID <span className="font-mono">{session.chatId}</span>) isn't on the admin
+              list for this bot.
+            </p>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
