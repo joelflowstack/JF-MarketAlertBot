@@ -11,6 +11,7 @@
  *   GET    /api/health                      liveness check
  *   POST   /api/telegram/verify-init-data    verifies a Telegram Mini App session, returns the real Chat ID
  *   POST   /api/telegram/webhook             Telegram webhook (production bot transport)
+ *   POST   /api/discord/interactions         Discord slash commands + buttons (production bot transport)
  *   GET    /api/price/:symbol               current quote for a symbol
  *   GET    /api/prices?symbols=A,B,C         batched quotes for multiple symbols (used by the dashboard)
  *   GET    /api/watchlist/:userId           a user's watched symbols
@@ -42,6 +43,8 @@ import { getSettings, updateSettings } from './services/settings.js';
 import { toApiSymbol, formatPrice, formatChangePercent, formatTimeUTC } from './utils/formatters.js';
 import { logger } from './utils/logger.js';
 import { bot, sendTelegramMessage } from './telegram/bot.js';
+import { discordSignatureMiddleware, handleDiscordInteraction } from './discord/interactions.js';
+import { sendDiscordMessage } from './discord/discordApi.js';
 
 const app = express();
 app.use(cors());
@@ -66,6 +69,14 @@ app.use(
     secretToken: process.env.TELEGRAM_WEBHOOK_SECRET,
   })
 );
+
+// ---------------------------------------------------------------------------
+// Discord interactions endpoint
+// Also registered BEFORE express.json() - discord-interactions' verification
+// middleware needs the raw request body to check the Ed25519 signature,
+// same reasoning as the Telegram webhook above.
+// ---------------------------------------------------------------------------
+app.post('/api/discord/interactions', discordSignatureMiddleware(), handleDiscordInteraction);
 
 app.use(express.json());
 
@@ -319,7 +330,7 @@ app.post(
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const result = await checkAllAlerts(sendTelegramMessage);
+    const result = await checkAllAlerts({ telegram: sendTelegramMessage, discord: sendDiscordMessage });
     res.json(result);
   })
 );
@@ -339,7 +350,7 @@ app.post(
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const result = await sendDailySummaries(sendTelegramMessage);
+    const result = await sendDailySummaries({ telegram: sendTelegramMessage, discord: sendDiscordMessage });
     res.json(result);
   })
 );
