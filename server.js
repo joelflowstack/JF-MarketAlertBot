@@ -12,6 +12,7 @@
  *   POST   /api/telegram/verify-init-data    verifies a Telegram Mini App session, returns the real Chat ID
  *   POST   /api/telegram/webhook             Telegram webhook (production bot transport)
  *   POST   /api/discord/interactions         Discord slash commands + buttons (production bot transport)
+ *   GET    /api/discord/register-commands?secret=X   registers Discord slash commands (browser-triggerable, one-time)
  *   GET    /api/price/:symbol               current quote for a symbol
  *   GET    /api/prices?symbols=A,B,C         batched quotes for multiple symbols (used by the dashboard)
  *   GET    /api/watchlist/:userId           a user's watched symbols
@@ -44,7 +45,8 @@ import { toApiSymbol, formatPrice, formatChangePercent, formatTimeUTC } from './
 import { logger } from './utils/logger.js';
 import { bot, sendTelegramMessage } from './telegram/bot.js';
 import { discordSignatureMiddleware, handleDiscordInteraction } from './discord/interactions.js';
-import { sendDiscordMessage } from './discord/discordApi.js';
+import { sendDiscordMessage, registerGlobalCommands } from './discord/discordApi.js';
+import { discordCommands } from './discord/commandDefinitions.js';
 
 const app = express();
 app.use(cors());
@@ -352,6 +354,32 @@ app.post(
 
     const result = await sendDailySummaries({ telegram: sendTelegramMessage, discord: sendDiscordMessage });
     res.json(result);
+  })
+);
+
+// ---------------------------------------------------------------------------
+// Discord slash command registration
+// Browser-triggerable (GET, so you can just visit the URL) - registers/
+// updates the bot's slash commands with Discord. Only needs to be run once,
+// or again whenever discord/commandDefinitions.js changes. Reuses
+// CRON_SECRET as a query param since a plain browser visit can't send a
+// custom Authorization header the way our other secret-protected routes do.
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/discord/register-commands',
+  asyncHandler(async (req, res) => {
+    if (!process.env.CRON_SECRET || req.query.secret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (!process.env.DISCORD_APPLICATION_ID) {
+      return res.status(400).json({ error: 'DISCORD_APPLICATION_ID is not set' });
+    }
+
+    const registered = await registerGlobalCommands(process.env.DISCORD_APPLICATION_ID, discordCommands);
+    res.json({
+      registered: registered.length,
+      note: 'Global commands can take up to an hour to appear everywhere - this is normal Discord behavior.',
+    });
   })
 );
 
