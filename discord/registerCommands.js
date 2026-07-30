@@ -1,47 +1,24 @@
 /**
  * discord/registerCommands.js
  *
- * One-time (or "run again whenever commands change") registration script -
- * Discord doesn't auto-discover commands like Telegraf does; slash commands
- * must be explicitly registered via the REST API before Discord will show
- * them to users. Run locally with:
+ * OPTIONAL local CLI alternative - if you have Node installed locally and
+ * prefer running this from your own machine:
  *
- *   DISCORD_BOT_TOKEN=... DISCORD_APPLICATION_ID=... npm run discord:register
+ *   npm run discord:register
+ *
+ * (reads DISCORD_BOT_TOKEN / DISCORD_APPLICATION_ID from a local .env file)
+ *
+ * If you don't have local files/Node set up at all, use the browser-only
+ * route instead: GET /api/discord/register-commands?secret=YOUR_CRON_SECRET
+ * on your deployed backend - see server.js. Both do the exact same thing,
+ * using the same command list from discord/commandDefinitions.js.
  *
  * Global commands can take up to ~1 hour to appear everywhere the first
  * time - that's normal Discord platform behavior, not a bug.
  */
 import 'dotenv/config';
 import { registerGlobalCommands } from './discordApi.js';
-
-// Option type numbers, per Discord's API: STRING = 3, NUMBER = 10.
-const STRING = 3;
-const NUMBER = 10;
-
-const commands = [
-  { name: 'start', description: 'Welcome message and quick intro' },
-  { name: 'help', description: 'Show all commands' },
-  {
-    name: 'watch',
-    description: 'Add an asset to your watchlist, optionally with an alert price',
-    options: [
-      { name: 'symbol', description: 'e.g. EURUSD, XAUUSD, BTCUSD', type: STRING, required: true },
-      { name: 'threshold', description: 'Alert price (optional)', type: NUMBER, required: false },
-    ],
-  },
-  { name: 'list', description: "Show everything you're watching" },
-  {
-    name: 'remove',
-    description: 'Stop watching an asset',
-    options: [{ name: 'symbol', description: 'e.g. EURUSD', type: STRING, required: true }],
-  },
-  {
-    name: 'price',
-    description: 'Get the current price, daily high/low, and 24h change',
-    options: [{ name: 'symbol', description: 'e.g. EURUSD', type: STRING, required: true }],
-  },
-  { name: 'id', description: 'Get your Discord user ID (for logging into the web dashboard)' },
-];
+import { discordCommands } from './commandDefinitions.js';
 
 const applicationId = process.env.DISCORD_APPLICATION_ID;
 if (!applicationId) {
@@ -49,9 +26,9 @@ if (!applicationId) {
   process.exit(1);
 }
 
-registerGlobalCommands(applicationId, commands)
+registerGlobalCommands(applicationId, discordCommands)
   .then(() => {
-    console.log(`Registered ${commands.length} commands. They may take up to an hour to appear everywhere.`);
+    console.log(`Registered ${discordCommands.length} commands. They may take up to an hour to appear everywhere.`);
     process.exit(0);
   })
   .catch((err) => {
