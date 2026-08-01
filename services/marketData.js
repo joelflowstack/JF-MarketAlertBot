@@ -116,8 +116,26 @@ export async function getQuotes(symbols) {
     // keyed by symbol when multiple symbols are requested in one call.
     const isMultiSymbolShape = toFetch.length > 1 || raw[toFetch[0]] !== undefined;
 
+    // IMPORTANT: don't assume the multi-symbol response's outer keys are
+    // byte-for-byte identical to what we requested (e.g. "BTC/USD" vs
+    // "BTCUSD") - match instead on each entry's OWN "symbol" field
+    // (falling back to the outer key), normalized for comparison. This is
+    // what fixed a real bug where multi-symbol lookups silently failed
+    // while single-symbol requests kept working fine - same underlying
+    // data, just a brittle exact-string key match that broke the moment
+    // Twelve Data's batch response used a different symbol format than we
+    // assumed.
+    const normalize = (s) => (s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let entriesByNormalizedSymbol = {};
+    if (isMultiSymbolShape) {
+      for (const [key, entry] of Object.entries(raw)) {
+        const canonicalSymbol = entry?.symbol || key;
+        entriesByNormalizedSymbol[normalize(canonicalSymbol)] = entry;
+      }
+    }
+
     for (const symbol of toFetch) {
-      const entry = isMultiSymbolShape ? raw[symbol] : raw;
+      const entry = isMultiSymbolShape ? entriesByNormalizedSymbol[normalize(symbol)] : raw;
 
       if (!entry || (entry.code && entry.code !== 200)) {
         logger.warn('No usable quote in Twelve Data response', {
