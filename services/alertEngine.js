@@ -11,7 +11,7 @@
 import { getAllWatchlists, updateLastPrice, setThreshold } from './watchlist.js';
 import { getQuotes } from './marketData.js';
 import { recordAlert } from './alertHistory.js';
-import { formatPrice, formatChangePercent, formatTimeUTC, toDisplaySymbol } from '../utils/formatters.js';
+import { formatPrice, formatChangePercent, formatTimeUTC, toDisplaySymbol, toApiSymbol } from '../utils/formatters.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -25,9 +25,18 @@ import { logger } from '../utils/logger.js';
 export async function checkAllAlerts(notifiers) {
   const watchlists = await getAllWatchlists();
 
+  // Defensively re-normalize every stored symbol before use. In practice
+  // this should always already be in "XXX/YYY" format (that's what
+  // addToWatchlist stores) - but if any record ever ends up malformed
+  // (e.g. "BTCUSD" instead of "BTC/USD", from any past bug or manual data
+  // edit), this line makes the cron self-heal instead of silently failing
+  // that symbol's alert check forever. toApiSymbol() is idempotent on an
+  // already-correct "XXX/YYY" string, so this is always safe to apply.
+  const normalizeSymbol = (rawSymbol) => (rawSymbol.includes('/') ? rawSymbol : toApiSymbol(rawSymbol) || rawSymbol);
+
   // Gather every distinct symbol across all users so we hit the market-data
   // API once per symbol, not once per (user, symbol) pair.
-  const allSymbols = watchlists.flatMap(({ items }) => items.map((i) => i.symbol));
+  const allSymbols = watchlists.flatMap(({ items }) => items.map((i) => normalizeSymbol(i.symbol)));
   if (allSymbols.length === 0) {
     return { checked: 0, alertsSent: 0 };
   }
@@ -39,7 +48,8 @@ export async function checkAllAlerts(notifiers) {
   for (const { userId, items } of watchlists) {
     for (const item of items) {
       checked += 1;
-      const quote = quotes[item.symbol];
+      const normalizedSymbol = normalizeSymbol(item.symbol);
+      const quote = quotes[normalizedSymbol];
 
       if (!quote) {
         logger.warn('Skipping alert check - no quote available', { symbol: item.symbol });
@@ -51,9 +61,9 @@ export async function checkAllAlerts(notifiers) {
         if (crossed) {
           const notify = notifiers[item.platform] || notifiers.telegram;
           try {
-            await notify(userId, formatAlertMessage(item.symbol, quote, item.threshold));
+            await notify(userId, formatAlertMessage(normalizedSymbol, quote, item.threshold));
             await recordAlert(userId, {
-              symbol: item.symbol,
+              symbol: normalizedSymbol,
               threshold: item.threshold,
               price: quote.price,
               changePercent: quote.changePercent,
