@@ -11,7 +11,7 @@
 import { getUserIdsWithDailySummaryEnabled } from './settings.js';
 import { listWatchlist } from './watchlist.js';
 import { getQuotes } from './marketData.js';
-import { formatPrice, formatChangePercent, toDisplaySymbol } from '../utils/formatters.js';
+import { formatPrice, formatChangePercent, toDisplaySymbol, toApiSymbol } from '../utils/formatters.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -22,19 +22,26 @@ export async function sendDailySummaries(notifiers) {
   const userIds = await getUserIdsWithDailySummaryEnabled();
   let sent = 0;
 
+  // Same defensive normalization as services/alertEngine.js - a stored
+  // symbol should always already be "XXX/YYY", but this self-heals any
+  // record that somehow ended up without the slash instead of silently
+  // showing "unavailable" for it forever. Idempotent on already-correct data.
+  const normalizeSymbol = (rawSymbol) => (rawSymbol.includes('/') ? rawSymbol : toApiSymbol(rawSymbol) || rawSymbol);
+
   for (const userId of userIds) {
     const items = await listWatchlist(userId);
     if (items.length === 0) continue; // nothing to summarize - skip silently, don't send an empty message
 
-    const symbols = items.map((item) => item.symbol);
+    const symbols = items.map((item) => normalizeSymbol(item.symbol));
     const quotes = await getQuotes(symbols);
 
     const lines = items.map((item) => {
-      const quote = quotes[item.symbol];
-      if (!quote) return `${toDisplaySymbol(item.symbol)}: unavailable right now`;
+      const normalizedSymbol = normalizeSymbol(item.symbol);
+      const quote = quotes[normalizedSymbol];
+      if (!quote) return `${toDisplaySymbol(normalizedSymbol)}: unavailable right now`;
       return [
-        `${toDisplaySymbol(item.symbol)}: ${formatPrice(quote.price, item.symbol)} (${formatChangePercent(quote.changePercent)})`,
-        `   High: ${formatPrice(quote.high, item.symbol)}  Low: ${formatPrice(quote.low, item.symbol)}`,
+        `${toDisplaySymbol(normalizedSymbol)}: ${formatPrice(quote.price, normalizedSymbol)} (${formatChangePercent(quote.changePercent)})`,
+        `   High: ${formatPrice(quote.high, normalizedSymbol)}  Low: ${formatPrice(quote.low, normalizedSymbol)}`,
       ].join('\n');
     });
 
