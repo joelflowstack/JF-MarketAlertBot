@@ -182,21 +182,34 @@ app.get(
 app.get(
   '/api/prices',
   asyncHandler(async (req, res) => {
-    const raw = (req.query.symbols || '').split(',').filter(Boolean);
-    const apiSymbols = raw.map(toApiSymbol).filter(Boolean);
-    if (apiSymbols.length === 0) {
+    const rawSymbols = (req.query.symbols || '').split(',').filter(Boolean);
+
+    // Keep raw<->normalized pairs together (rather than two separately
+    // filtered arrays) so we can echo the response back keyed by exactly
+    // what the client asked for - see the comment below for why that
+    // matters.
+    const pairs = rawSymbols.map((r) => [r, toApiSymbol(r)]).filter(([, apiSymbol]) => apiSymbol);
+    if (pairs.length === 0) {
       return res.json({ prices: {} });
     }
 
-    const quotes = await getQuotes(apiSymbols);
+    const quotes = await getQuotes(pairs.map(([, apiSymbol]) => apiSymbol));
+
+    // IMPORTANT: key the response by the ORIGINAL raw symbol the client
+    // sent (e.g. "BTCUSD"), not the internally-normalized form used to
+    // query Twelve Data (e.g. "BTC/USD"). This is what makes
+    // priceMap[rawSymbolIRequested] always reliable on the client side -
+    // no risk of a lookup mismatch regardless of exactly how a stored
+    // watchlist symbol happens to be formatted.
     const prices = {};
-    for (const [symbol, quote] of Object.entries(quotes)) {
-      prices[symbol] = quote
+    for (const [rawSymbol, apiSymbol] of pairs) {
+      const quote = quotes[apiSymbol];
+      prices[rawSymbol] = quote
         ? {
-            symbol,
-            price: formatPrice(quote.price, symbol),
-            high: formatPrice(quote.high, symbol),
-            low: formatPrice(quote.low, symbol),
+            symbol: apiSymbol,
+            price: formatPrice(quote.price, apiSymbol),
+            high: formatPrice(quote.high, apiSymbol),
+            low: formatPrice(quote.low, apiSymbol),
             changePercent: formatChangePercent(quote.changePercent),
             timestamp: formatTimeUTC(quote.timestamp),
           }
