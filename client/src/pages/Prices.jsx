@@ -19,8 +19,11 @@ export function Prices() {
       const symbols = wl.items.map((item) => item.symbol.replace('/', ''));
       const { prices: priceMap } = symbols.length ? await api.getPrices(symbols) : { prices: {} };
 
-      const results = wl.items.map((item) => {
-        const quote = priceMap[item.symbol];
+      // Look up using the SAME symbol form we just sent in the request
+      // (server now echoes responses back keyed by exactly what was asked
+      // for) - not the raw item.symbol, which could differ in formatting.
+      const results = wl.items.map((item, i) => {
+        const quote = priceMap[symbols[i]];
         return quote ? { ...quote, threshold: item.threshold } : { symbol: item.symbol, error: true };
       });
       setPrices(results);
